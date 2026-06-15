@@ -18,6 +18,15 @@ const PEOPLE: { role: UserRole; label: string; emoji: string }[] = [
 
 type MainTab = 'calendar' | 'tasks' | 'meds' | 'diet' | 'workout' | 'overview'
 
+const ALL_TABS: { id: MainTab; icon: string; label: string; hideFor?: UserRole[] }[] = [
+  { id: 'calendar', icon: '📅', label: 'Calendar' },
+  { id: 'tasks',    icon: '✅', label: 'Tasks' },
+  { id: 'meds',     icon: '💊', label: 'Meds' },
+  { id: 'diet',     icon: '🍎', label: 'Diet' },
+  { id: 'workout',  icon: '💪', label: 'Workout', hideFor: ['gianna', 'shared'] },
+  { id: 'overview', icon: '📊', label: 'Overview' },
+]
+
 export default function Home() {
   const [mainTab, setMainTab] = useState<MainTab>('calendar')
   const [activePerson, setActivePerson] = useState<UserRole>('jeff')
@@ -33,7 +42,12 @@ export default function Home() {
             {PEOPLE.map(({ role, label }) => (
               <button
                 key={role}
-                onClick={() => setActivePerson(role)}
+                onClick={() => {
+                  setActivePerson(role)
+                  // If switching to someone who can't see current tab, go to tasks
+                  const tab = ALL_TABS.find(t => t.id === mainTab)
+                  if (tab?.hideFor?.includes(role)) setMainTab('tasks')
+                }}
                 className={`px-3 py-1 rounded-full text-sm font-medium whitespace-nowrap transition-colors ${
                   activePerson === role
                     ? 'bg-blue-600 text-white'
@@ -59,18 +73,13 @@ export default function Home() {
 
       {/* Bottom tab bar */}
       <nav className="fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-2xl bg-white border-t border-gray-200 flex overflow-x-auto">
-        {([
-          { id: 'calendar', icon: '📅', label: 'Calendar' },
-          { id: 'tasks', icon: '✅', label: 'Tasks' },
-          { id: 'meds', icon: '💊', label: 'Meds' },
-          { id: 'diet', icon: '🍎', label: 'Diet' },
-          { id: 'workout', icon: '💪', label: 'Workout' },
-          { id: 'overview', icon: '📊', label: 'Overview' },
-        ] as { id: MainTab; icon: string; label: string }[]).map(({ id, icon, label }) => (
+        {ALL_TABS
+          .filter(t => !t.hideFor?.includes(activePerson))
+          .map(({ id, icon, label }) => (
           <button
             key={id}
             onClick={() => setMainTab(id)}
-            className={`flex-1 flex flex-col items-center py-2 text-xs transition-colors ${
+            className={`flex-1 flex flex-col items-center py-2 text-xs transition-colors min-w-[56px] ${
               mainTab === id ? 'text-blue-600' : 'text-gray-400 hover:text-gray-600'
             }`}
           >
