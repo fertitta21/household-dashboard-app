@@ -4,7 +4,30 @@ import { useEffect, useState, useCallback } from 'react'
 import { supabase } from '@/lib/supabase'
 import type { UserRole } from '@/lib/types'
 
-type ExerciseType = 'warmup' | 'main' | 'stretch'
+type ExerciseType = 'warmup' | 'main' | 'stretch' | 'fst7' | 'cardio' | 'core'
+
+type TemplateExercise = {
+  id: string
+  template_id: string
+  name: string
+  exercise_type: ExerciseType
+  sets: number | null
+  reps_min: number | null
+  reps_max: number | null
+  weight_unit: string
+  duration_minutes: number | null
+  rest_seconds: number | null
+  notes: string | null
+  sort_order: number
+}
+
+type WorkoutTemplate = {
+  id: string
+  owner_role: string
+  day_of_week: number
+  focus: string | null
+  notes: string | null
+}
 
 type Exercise = {
   id: string
@@ -32,10 +55,15 @@ type WorkoutLog = {
 }
 
 const SECTION_LABELS: Record<ExerciseType, { label: string; emoji: string }> = {
-  warmup: { label: 'Warm Up', emoji: '🔥' },
-  main: { label: 'Main Workout', emoji: '💪' },
-  stretch: { label: 'Cool Down / Stretch', emoji: '🧘' },
+  warmup:  { label: 'Warm Up',              emoji: '🔥' },
+  main:    { label: 'Main Workout',          emoji: '💪' },
+  fst7:    { label: 'FST-7 Finisher',        emoji: '🔆' },
+  core:    { label: 'Core',                  emoji: '⚡' },
+  cardio:  { label: 'Cardio',               emoji: '🏃' },
+  stretch: { label: 'Cool Down / Stretch',   emoji: '🧘' },
 }
+
+const SECTION_ORDER: ExerciseType[] = ['warmup', 'main', 'fst7', 'core', 'cardio', 'stretch']
 
 type ExerciseModalProps = {
   logId: string
@@ -207,14 +235,21 @@ export default function WorkoutTracker({ role, name }: { role: UserRole; name: s
   const [date, setDate] = useState(today)
   const [log, setLog] = useState<WorkoutLog | null>(null)
   const [exercises, setExercises] = useState<Exercise[]>([])
+  const [template, setTemplate] = useState<WorkoutTemplate | null>(null)
   const [loading, setLoading] = useState(true)
+  const [loadingTemplate, setLoadingTemplate] = useState(false)
   const [addModal, setAddModal] = useState<{ type: ExerciseType } | null>(null)
   const [editExercise, setEditExercise] = useState<Exercise | null>(null)
   const [showRating, setShowRating] = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true)
-    const { data: logData } = await supabase.from('workout_logs').select('*').eq('owner_role', role).eq('date', date).maybeSingle()
+    const dow = new Date(date + 'T12:00:00').getDay()
+    const [{ data: logData }, { data: tmpl }] = await Promise.all([
+      supabase.from('workout_logs').select('*').eq('owner_role', role).eq('date', date).maybeSingle(),
+      supabase.from('workout_templates').select('*').eq('owner_role', role).eq('day_of_week', dow).maybeSingle(),
+    ])
+    setTemplate(tmpl ?? null)
     if (logData) {
       const { data: exData } = await supabase.from('workout_exercises').select('*').eq('workout_log_id', logData.id).order('sort_order')
       setLog(logData)
@@ -225,6 +260,38 @@ export default function WorkoutTracker({ role, name }: { role: UserRole; name: s
     }
     setLoading(false)
   }, [role, date])
+
+  async function loadFromTemplate() {
+    if (!template) return
+    setLoadingTemplate(true)
+    // Create the log entry
+    const { data: newLog } = await supabase.from('workout_logs').insert({ owner_role: role, date }).select().single()
+    setLog(newLog)
+    // Load template exercises and insert them
+    const { data: tmplExercises } = await supabase
+      .from('workout_template_exercises')
+      .select('*')
+      .eq('template_id', template.id)
+      .order('sort_order')
+    if (tmplExercises && newLog) {
+      const toInsert = tmplExercises.map((te: TemplateExercise) => ({
+        workout_log_id: newLog.id,
+        name: te.name,
+        exercise_type: te.exercise_type,
+        sets: te.sets,
+        reps: te.reps_min ? Math.round((te.reps_min + (te.reps_max ?? te.reps_min)) / 2) : null,
+        weight_unit: te.weight_unit,
+        duration_minutes: te.duration_minutes,
+        rest_seconds: te.rest_seconds,
+        notes: te.notes ? `${te.notes}${te.reps_min && te.reps_max ? ` (${te.reps_min}-${te.reps_max} reps)` : ''}` : (te.reps_min && te.reps_max ? `Target: ${te.reps_min}-${te.reps_max} reps` : null),
+        done: false,
+        sort_order: te.sort_order,
+      }))
+      const { data: inserted } = await supabase.from('workout_exercises').insert(toInsert).select()
+      setExercises(inserted ?? [])
+    }
+    setLoadingTemplate(false)
+  }
 
   useEffect(() => { load() }, [load])
 
@@ -249,6 +316,7 @@ export default function WorkoutTracker({ role, name }: { role: UserRole; name: s
 
   const byType = (type: ExerciseType) => exercises.filter(e => e.exercise_type === type)
   const doneCount = exercises.filter(e => e.done).length
+  const sectionsWithContent = SECTION_ORDER.filter(t => byType(t).length > 0)
 
   if (loading) return <div className="mt-8 text-center text-gray-400 text-sm">Loading…</div>
 
@@ -289,7 +357,7 @@ export default function WorkoutTracker({ role, name }: { role: UserRole; name: s
       )}
 
       {/* Exercise sections */}
-      {(['warmup', 'main', 'stretch'] as ExerciseType[]).map(type => (
+      {SECTION_ORDER.map(type => (
         <section key={type}>
           <div className="flex items-center justify-between mb-2">
             <h2 className="text-xs font-semibold text-gray-400 uppercase tracking-wider">
@@ -336,7 +404,32 @@ export default function WorkoutTracker({ role, name }: { role: UserRole; name: s
         </section>
       ))}
 
-      {exercises.length === 0 && !loading && (
+      {/* Template banner — shown when no workout yet but a template exists */}
+      {exercises.length === 0 && !loading && template && template.focus !== 'Complete Rest' && (
+        <div className="bg-blue-50 border border-blue-200 rounded-2xl p-4 space-y-2">
+          <div>
+            <p className="text-sm font-semibold text-blue-800">📋 {template.focus}</p>
+            {template.notes && <p className="text-xs text-blue-600 mt-1">{template.notes}</p>}
+          </div>
+          <button
+            onClick={loadFromTemplate}
+            disabled={loadingTemplate}
+            className="w-full bg-blue-600 text-white rounded-xl py-2.5 text-sm font-medium hover:bg-blue-700 disabled:opacity-50 transition-colors"
+          >
+            {loadingTemplate ? 'Loading workout…' : '⚡ Load Today\'s Plan'}
+          </button>
+        </div>
+      )}
+
+      {exercises.length === 0 && !loading && template?.focus === 'Complete Rest' && (
+        <div className="bg-gray-50 border border-gray-200 rounded-2xl p-6 text-center space-y-1">
+          <p className="text-2xl">😴</p>
+          <p className="text-sm font-semibold text-gray-700">Rest Day</p>
+          <p className="text-xs text-gray-400">No lifting, no cardio. Sleep, hydrate, recover.</p>
+        </div>
+      )}
+
+      {exercises.length === 0 && !loading && !template && (
         <p className="text-center text-gray-400 text-sm mt-4">No exercises yet. Add a warmup, main set, or stretch above.</p>
       )}
 
